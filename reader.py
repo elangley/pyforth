@@ -1,6 +1,15 @@
 from __future__ import print_function
 import sys
 import inspect
+import contextlib
+
+@contextlib.contextmanager
+def redir_stdout(new):
+    old = sys.stdout
+    sys.stdout = new
+    yield
+    sys.stdout = old
+
 SPACE = None
 class _RUN: pass
 
@@ -139,7 +148,7 @@ class Reader(object):
         c = 80 // (mlen + 2)
         while words:
             head, words = words[:c], words[c:]
-            print(' '.join(x.center(mlen) for x in head))
+            print(' '.join(x.center(mlen) for x in head), file=self.out)
 
     def forget(self, stack, rstack=None):
         self.program_ctr += 1 # since the program counter doesn't update until after the yield
@@ -179,10 +188,10 @@ class Reader(object):
             self.program_ctr -= 1
         newfun.__name__ = '_forth_%s' % name
     def prog_print(self, stack, rstack=None):
-        print('<%d>' % len(self.program), end=' ')
+        print('<%d>' % len(self.program), end=' ', file=self.out)
         for n in self.program:
-            print(n, end=' ')
-        print()
+            print(n, end=' ', file=self.out)
+        print(file=self.out)
 
     def set_pctr(self, v):
         self.program_ctr = v
@@ -217,7 +226,7 @@ class Reader(object):
         dst = stack.pop()
         self.set_pctr(dst)
 
-    def __init__(self):
+    def __init__(self, out=sys.stdout):
         self.sym_words = SymbolDict()
         self.stack = []
         self.rstack = []
@@ -226,6 +235,7 @@ class Reader(object):
         self.pcs = []
         self.mode = 0; # 0 - Normal; 1 - string reading
         self.program_ctr = 0
+        self.out = out
         self.add_symbol('words')(self.words)
         self.add_symbol('.p')(self.prog_print)
         self.add_symbol(':')(self.colon)
@@ -260,13 +270,13 @@ class Reader(object):
     def read(self, inp, silent=False):
         self.inp = [inp]
         delim = SPACE
-        if not silent: print(self.program_ctr, end='? ')
+        if not silent: print(self.program_ctr, end='? ', file=self.out)
         for word in self.read_word():
             #print('<%s>' % word, end=' ')
             if word == _RUN:
                 if not silent:
-                    print(' ok')
-                    print(self.program_ctr, end='? ')
+                    print(' ok', file=self.out)
+                    print(self.program_ctr, end='? ', file=self.out)
                 continue
             elif word == '."':
                 out = []
@@ -274,7 +284,7 @@ class Reader(object):
                 while word != '"':
                     out.append(self.__getword)
                     word = self.__getword()
-                print(' '.join(out))
+                print(' '.join(out), file=self.out)
                 continue
             elif word == '': continue
             self.stack.append(word)
@@ -284,13 +294,15 @@ class Reader(object):
             sym = self.stack.pop()
         result = None
         if sym.lower() in self.symbols:
-            result = self.symbols[sym.lower()](self.stack, self.rstack)
+            with redir_stdout(self.out):
+                result = self.symbols[sym.lower()](self.stack, self.rstack)
         else:
             result = self.numberp(sym)
             if result is None: raise ValueError("Symbol %r not found" % sym)
             else:
                 self.stack.append(result)
         return result
+
     def numberp(self, sym):
         is_valid = -1 # -1 = undecided, 0 = False, 1 = True
         typ = int
@@ -470,8 +482,7 @@ def clear(stack, rstack):
     del stack[:]
     del rstack[:]
 
-if __name__ == '__main__':
-    import sys
+def init_reader():
     reader = Reader()
     reader.compile(*'0= 0 ='.split(None,1))
     reader.compile(*'0> 0 >'.split(None,1))
@@ -504,6 +515,11 @@ if __name__ == '__main__':
     reader.compile(*'loop r> 1+ r> 2dup >r >r < invert until rdrop rdrop'.split(None, 1))
     reader.compile('begin', 'markr')
     reader.compile('until', 'invert if jmpr else clrjmp then')
+    return reader
+
+if __name__ == '__main__':
+    import sys
+    reader = init_reader()
 
     import argparse
     parser = argparse.ArgumentParser()
